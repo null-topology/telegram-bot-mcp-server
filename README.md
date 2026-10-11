@@ -13,13 +13,15 @@ A powerful **Model Context Protocol (MCP) server** for seamless Telegram Bot API
 - Failed calls return `isError: true`, with Telegram error details and `retry_after` on rate limits.
 - Common send options support replies, forum threads, formatting, silent delivery, content protection, and link previews.
 - Media captions use the 1024-character limit; overflow continues as text. Split text reserves room for part indicators within 4096 characters.
-- All 45 tools include titles and read-only, destructive, and open-world annotations.
+- All 50 tools include titles and read-only, destructive, and open-world annotations.
+- Media tools upload local files from the server host, optionally restricted to `TELEGRAM_UPLOAD_ROOTS`; new `send-video-note`, `send-media-group`, `edit-message-caption`, `set-message-reaction`, and `download-file` tools.
 
 ## ✨ Key Features
 
-- **📝 45 Tools, Rich API Coverage**: Messaging, media, polls, chat administration, invite links, and bot configuration
+- **📝 50 Tools, Rich API Coverage**: Messaging, media, polls, chat administration, invite links, and bot configuration
 - **🔄 Intelligent Message Splitting**: Automatically handles Telegram's 4096 character limit while preserving word boundaries and formatting
 - **🖼️ Full Media Support**: Photos, documents, videos, audio, voice messages, animations, and stickers by file_id or URL
+- **📁 Local Files**: Upload files from the server host (optionally limited to allowed directories), convert voice audio to OGG/Opus with ffmpeg, and download files of up to 20 MB
 - **🎲 Interactive Content**: Polls, quizzes, dice, locations, contacts, and chat actions (typing indicators)
 - **✏️ Message Lifecycle**: Edit, delete, forward, copy, and pin messages
 - **👮 Group Administration**: Ban/unban, restrict/mute, promote admins, and manage invite links
@@ -48,6 +50,7 @@ npm install @null-topology/telegram-bot-mcp-server
 
 1. **Node.js 20+**: [Download here](https://nodejs.org/)
 2. **Telegram Bot Token**: Get one from [@BotFather](https://t.me/BotFather)
+3. **ffmpeg** (optional): Used by `send-voice` to convert local audio that is not OGG/Opus
 
 ### Getting Your Bot Token
 
@@ -105,7 +108,33 @@ Add this configuration to your MCP client (Claude Desktop, etc.):
 }
 ```
 
-## 🛠️ Available Tools (45)
+### Environment variables
+
+| Variable | Required | Behavior |
+|----------|----------|----------|
+| `TELEGRAM_BOT_API_TOKEN` | Yes | Bot token from @BotFather |
+| `TELEGRAM_UPLOAD_ROOTS` | No | Absolute directories on the server host, separated by `:` (`;` on Windows). When it lists at least one directory, local media uploads are restricted to those directories; when it is unset, empty, or only separators, a caller can send any file the server account can read. Set it when the server acts on untrusted input. `file_id` and URL inputs work either way |
+| `TELEGRAM_DOWNLOAD_DIR` | No | Absolute directory on the server host where `download-file` saves files; created if missing. Unset makes `download-file` refuse |
+
+Both paths are resolved on the machine that runs the server, not on the MCP client:
+
+```json
+{
+  "mcpServers": {
+    "telegram_bot": {
+      "command": "npx",
+      "args": ["@null-topology/telegram-bot-mcp-server"],
+      "env": {
+        "TELEGRAM_BOT_API_TOKEN": "your_bot_token_here",
+        "TELEGRAM_UPLOAD_ROOTS": "/srv/telegram/outbox:/srv/telegram/shared",
+        "TELEGRAM_DOWNLOAD_DIR": "/srv/telegram/inbox"
+      }
+    }
+  }
+}
+```
+
+## 🛠️ Available Tools (50)
 
 ### 📨 Messaging
 
@@ -113,6 +142,8 @@ Add this configuration to your MCP client (Claude Desktop, etc.):
 |------|-------------|--------|
 | `send-message` | Send a text message. Messages over 4096 characters are automatically split while preserving word boundaries | `chatId`, `text` |
 | `edit-message-text` | Edit the text of a message previously sent by the bot | `chatId`, `messageId`, `text` |
+| `edit-message-caption` | Edit the caption of a media message sent by the bot (up to 1024 characters, never split) | `chatId`, `messageId`, `caption` |
+| `set-message-reaction` | Set the bot's emoji reaction on a message, or remove it by omitting `emoji` | `chatId`, `messageId`, `emoji?`, `isBig?` |
 | `delete-message` | Delete a message from a chat | `chatId`, `messageId` |
 | `forward-message` | Forward a message from one chat to another (keeps a link to the original) | `chatId`, `fromChatId`, `messageId` |
 | `copy-message` | Copy a message to another chat without a link to the original | `chatId`, `fromChatId`, `messageId` |
@@ -129,9 +160,77 @@ Add this configuration to your MCP client (Claude Desktop, etc.):
 | `send-voice` | Send a playable voice message (.OGG/OPUS, .MP3, .M4A) | `chatId`, `media`, `caption?` |
 | `send-animation` | Send an animation (GIF or soundless MPEG4) | `chatId`, `media`, `caption?` |
 | `send-sticker` | Send a static, animated, or video sticker | `chatId`, `media` |
+| `send-video-note` | Send a round video message (no caption; not accepted by URL) | `chatId`, `videoNote`, `duration?`, `length?` |
+| `send-media-group` | Send 2-10 photos, videos, documents, or audio files as an album | `chatId`, `media` array |
 | `get-file` | Get file info for any file_id (no download link) | `fileId` |
+| `download-file` | Download a file of up to 20 MB into `TELEGRAM_DOWNLOAD_DIR` | `fileId` |
 
-For all media tools, `media` accepts a Telegram `file_id` (recommended) or an HTTP URL.
+For all media tools, `media` accepts a Telegram `file_id` (recommended) or an HTTP URL. It also accepts an absolute local path, restricted to `TELEGRAM_UPLOAD_ROOTS` when it lists at least one directory.
+
+### Media inputs and limits
+
+Every media input (`media`, `videoNote`, and each `send-media-group` item) takes one of three forms:
+
+| Form | Example | Behavior |
+|------|---------|----------|
+| Telegram `file_id` | `AgACAgIAAxkBAAIB...` | Passed to Telegram as is |
+| `http://` or `https://` URL | `https://example.com/photo.jpg` | Passed to Telegram, which fetches it |
+| Absolute local path | `/srv/telegram/outbox/report.pdf` | Uploaded from the server host |
+
+`videoNote` is the exception: it takes a `file_id` or a local path, because
+Telegram does not accept video notes by URL.
+
+A local path is accepted only when, after resolving symlinks, it is an existing
+regular file, and paths with `.` or `..` segments are rejected. When
+`TELEGRAM_UPLOAD_ROOTS` lists at least one directory, the file must also be
+inside one of them: both the path as given and the file it resolves to must be
+inside a root, so a symlink that points outside the roots is rejected. Empty
+entries in the list are ignored, and any other entry that is not an absolute
+path makes every local upload fail. When it is unset, empty, or only separators,
+a caller can send any file the server account can read, such as configuration
+files or keys, to any chat the bot can write to. That includes the server's own
+process environment, which holds the bot token (for example `/proc/self/environ`
+on Linux). Set it whenever the server acts on untrusted input, such as messages
+from other users or content fetched from the web. Local uploads are limited to 10 MB for photos
+and 50 MB for other media, checked before the upload starts and enforced while
+the file is read. The optional
+`filename` input sets the file name shown in Telegram for a local upload and
+defaults to the file's own name; it is ignored for `file_id` and URL inputs.
+
+`send-voice` uploads OGG files that contain Opus audio unchanged. Other local
+audio is converted to OGG/Opus with `ffmpeg` in a temporary directory that is
+removed afterwards, so `ffmpeg` must be on the server's `PATH` only when you send
+non-Opus local files as voice messages; `file_id` and URL inputs are never
+converted. `send-voice` also accepts an optional `duration` in seconds.
+
+### Media groups
+
+`send-media-group` takes a `media` array of 2-10 items, each
+`{ type, media, caption?, parseMode?, filename? }` with `type` one of `photo`,
+`video`, `document`, or `audio`. Photos and videos can be mixed in one album;
+documents can only be grouped with documents and audio only with audio. Each
+caption is limited to 1024 characters and is never split; a plain-text caption
+over the limit is rejected before sending, while HTML and MarkdownV2 captions are
+passed to Telegram, which measures them after parsing. The
+whole group is validated before any file is uploaded. The tool accepts
+`replyToMessageId`, `messageThreadId`, `disableNotification`, and `protectContent`,
+and returns `chat_id`, `message_id`, `message_ids`, `date`, and an `items` array
+with `message_id`, `file_id`, and `file_unique_id` for each delivered item (the
+largest size for photos).
+
+### Downloading files
+
+`download-file` saves a file into `TELEGRAM_DOWNLOAD_DIR` as
+`<file_unique_id>-<original name>`, with unsafe characters replaced; an existing
+file is never overwritten, and a numbered name such as `<name>-1.pdf` is used
+instead. The directory should be writable only by the account that runs the
+server. When `TELEGRAM_UPLOAD_ROOTS` lists directories, the same applies to
+those directories and the directories inside them. Files over
+20 MB are refused, and a download that grows past 20 MB is aborted without
+leaving a partial file. The result is
+`{ "path", "size", "mime", "file_id", "file_unique_id" }`, where `mime` is derived
+from the file extension (`application/octet-stream` when unknown). The download
+URL contains the bot token and is never returned or logged.
 
 ### 🎲 Interactive Content
 
@@ -192,7 +291,8 @@ All options below are optional. `replyToMessageId`, `messageThreadId`,
 `send-document`, `send-video`, `send-audio`, `send-voice`, `send-animation`,
 `send-sticker`, `send-poll`, `send-dice`, `send-location`, `send-contact`, and
 `copy-message`. `forward-message` supports the same options except replies;
-`send-chat-action` supports `messageThreadId` only.
+`send-chat-action` supports `messageThreadId` only. `send-video-note` and
+`send-media-group` support the same four options.
 
 | Option | Behavior |
 |--------|----------|
@@ -210,7 +310,9 @@ on `send-photo`, `send-document`, `send-video`, `send-audio`, `send-voice`,
 characters continue as text messages. Every split or overflow part retains the
 send and formatting options, with a 100 ms delay between parts. Long text and
 captions are split without regard to HTML/MarkdownV2 markup, so a tag or entity
-that spans a split point can be rejected by Telegram.
+that spans a split point can be rejected by Telegram. `edit-message-caption` and
+each `send-media-group` item also accept `parseMode`; their captions are limited
+to 1024 characters and are rejected rather than split.
 
 ### JSON answers
 
@@ -221,7 +323,9 @@ Media results add `file_id` and `file_unique_id` (the largest photo size for pho
 `copy-message` uses the input chat identifier and `date: null`; an edit returning
 only a boolean produces `{ "chat_id": "...", "message_id": 123, "edited": true }`.
 `get-me` returns the full bot information object. Failed tools return `isError: true`
-instead of a success result.
+instead of a success result. `edit-message-caption` answers like `edit-message-text`,
+`set-message-reaction` returns `{ "ok": true }`, and `send-media-group` and
+`download-file` return the shapes described above.
 
 ### Development checks
 
@@ -234,6 +338,9 @@ Tests require Node.js 22.12+ and use mocked Telegram calls and the in-memory MCP
 transport; no token or network access is needed. CLI help and version output go
 to stdout and exit before the transport starts. Diagnostics go to stderr so
 stdout remains reserved for the stdio protocol while the server is running.
+The `download-file` tests serve fake Telegram responses from a local
+`127.0.0.1` HTTP server, and the real `ffmpeg` voice conversion test runs only
+when `ffmpeg` is on `PATH`.
 
 ## 🆕 New Features
 

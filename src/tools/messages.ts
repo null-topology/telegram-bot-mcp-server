@@ -1,7 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Telegraf } from "telegraf";
+import type { Message, ReactionTypeEmoji } from "telegraf/types";
 import { z } from "zod";
-import { handleToolError, jsonResult, messageResult, sendLongMessage, sendWithLongCaption, textResult } from "../utils";
+import { captionLength, handleToolError, jsonResult, messageResult, sendLongMessage, sendWithLongCaption, TELEGRAM_CAPTION_LIMIT, textResult } from "../utils";
 import { chatIdSchema, forwardSchema, parseSchema, previewSchema, sendOptions, sendSchema, textOptions, threadSchema, toolMetadata } from "./common";
 
 export function registerMessageTools(server: McpServer, bot: Telegraf) {
@@ -86,6 +87,45 @@ export function registerMessageTools(server: McpServer, bot: Telegraf) {
       const response = await bot.telegram.editMessageText(chatId, messageId, undefined, text, textOptions(input));
       return response === true ? jsonResult({ chat_id: chatId, message_id: messageId, edited: true }) : messageResult([response]);
     } catch (error) { return handleToolError(error, "edit-message-text", `Editing message ${messageId} in chat ${chatId}`); }
+  });
+
+  server.registerTool("edit-message-caption", {
+    ...toolMetadata("edit-message-caption"),
+    description: "Edit the caption of a media message previously sent by the bot. Captions are limited to 1024 characters and are never split; returns JSON message identifiers or an edit confirmation.",
+    inputSchema: {
+      chatId: chatIdSchema,
+      messageId: z.number().describe("Identifier of the message to edit"),
+      caption: z.string().describe("New caption of the message, 0-1024 characters"),
+      ...parseSchema,
+    },
+  }, async (input) => {
+    const { chatId, messageId, caption } = input;
+    try {
+      // Formatted captions are measured by Telegram after entity parsing, so only plain text is checked here.
+      const plain = input.parseMode === undefined || input.parseMode === "none";
+      if (plain && captionLength(caption) > TELEGRAM_CAPTION_LIMIT) {
+        throw new Error(`Caption is ${captionLength(caption)} characters; Telegram limits captions to ${TELEGRAM_CAPTION_LIMIT} characters and an edited caption cannot continue in other messages`);
+      }
+      const response = await bot.telegram.editMessageCaption(chatId, messageId, undefined, caption, textOptions(input));
+      return response === true ? jsonResult({ chat_id: chatId, message_id: messageId, edited: true }) : messageResult([response as Message]);
+    } catch (error) { return handleToolError(error, "edit-message-caption", `Editing caption of message ${messageId} in chat ${chatId}`); }
+  });
+
+  server.registerTool("set-message-reaction", {
+    ...toolMetadata("set-message-reaction"),
+    description: "Set the bot's emoji reaction on a message, or remove it by omitting the emoji. Telegram checks the emoji against its allowed reactions. Returns JSON { ok: true }.",
+    inputSchema: {
+      chatId: chatIdSchema,
+      messageId: z.number().describe("Identifier of the target message"),
+      emoji: z.string().min(1).optional().describe("A single emoji to react with; omit it to remove the bot's reaction"),
+      isBig: z.boolean().optional().describe("Show the reaction with a big animation"),
+    },
+  }, async ({ chatId, messageId, emoji, isBig }) => {
+    try {
+      const reaction: ReactionTypeEmoji[] = emoji ? [{ type: "emoji", emoji: emoji as ReactionTypeEmoji["emoji"] }] : [];
+      await bot.telegram.setMessageReaction(chatId, messageId, reaction, isBig);
+      return jsonResult({ ok: true });
+    } catch (error) { return handleToolError(error, "set-message-reaction", `Setting reaction on message ${messageId} in chat ${chatId}`); }
   });
 
   server.registerTool("delete-message", {

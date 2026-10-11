@@ -9,6 +9,21 @@
     "node": ">=20"
   },
   "description": "A Model Context Protocol (MCP) server for Telegram Bot API integration",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "telegram",
+    "telegram-bot"
+  ],
+  "author": "null-topology",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/null-topology/telegram-bot-mcp-server.git"
+  },
+  "homepage": "https://github.com/null-topology/telegram-bot-mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/null-topology/telegram-bot-mcp-server/issues"
+  },
   "main": ".build/index.js",
   "bin": {
     "telegram-bot-mcp-server": ".build/cli.js"

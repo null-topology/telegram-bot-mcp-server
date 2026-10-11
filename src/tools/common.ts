@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type { Convenience } from "telegraf/types";
+import type { FfmpegRunner } from "../voice";
 
 export const chatIdSchema = z.string().describe("Unique identifier for the target chat or username of the target channel");
 export const userIdSchema = z.number().describe("Unique identifier of the target user");
@@ -22,6 +23,14 @@ export const parseSchema = {
 export const previewSchema = {
   disableLinkPreview: z.boolean().optional().describe("Disable link previews in the message text"),
 };
+export const filenameSchema = z.string().min(1).max(255)
+  .regex(/^[^\x00-\x1f\x7f"\\/]+$/, "File name must not contain slashes, quotes or control characters")
+  .optional().describe("File name shown in Telegram for an uploaded local file; ignored for file_id and URL inputs");
+
+/** Dependencies that tests can replace. */
+export interface ToolOptions {
+  runFfmpeg?: FfmpegRunner;
+}
 
 interface SendInputs {
   messageThreadId?: number;
@@ -49,6 +58,27 @@ export function textOptions(input: SendInputs): Convenience.ExtraEditMessageText
     ...(input.parseMode && input.parseMode !== "none" && { parse_mode: input.parseMode }),
     ...(input.disableLinkPreview === true && { link_preview_options: { is_disabled: true } }),
   };
+}
+
+/** Option fields that Telegraf leaves out of multipart requests unless they are already strings. */
+const MULTIPART_JSON_FIELDS = ["reply_parameters", "link_preview_options"] as const;
+
+/**
+ * Returns extra unchanged for JSON requests. When the call uploads a local file, Telegraf sends
+ * multipart/form-data and drops these nested objects, so they are passed as JSON strings.
+ */
+export function multipartOptions<T extends object>(extra: T, uploading: boolean): T {
+  if (!uploading) return extra;
+  const result = { ...extra } as Record<string, unknown>;
+  for (const field of MULTIPART_JSON_FIELDS) {
+    if (result[field] !== undefined && typeof result[field] !== "string") result[field] = JSON.stringify(result[field]);
+  }
+  return result as T;
+}
+
+/** True when a resolved media value is a local upload rather than a file_id or URL string. */
+export function isUpload(media: unknown): boolean {
+  return typeof media === "object" && media !== null;
 }
 
 const readOnly = new Set([
