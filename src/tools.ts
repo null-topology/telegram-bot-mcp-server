@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Telegraf } from "telegraf";
 import { registerBotTools } from "./tools/bot";
 import { registerChatTools } from "./tools/chat";
+import type { ToolOptions } from "./tools/common";
 import { registerFileTools } from "./tools/files";
 import { registerInteractiveTools } from "./tools/interactive";
 import { registerInviteTools } from "./tools/invites";
@@ -10,10 +11,10 @@ import { registerMemberTools } from "./tools/members";
 import { registerMessageTools } from "./tools/messages";
 
 /** Registers every Telegram tool without starting an update consumer. */
-export function registerAllTools(server: McpServer, bot: Telegraf) {
+export function registerAllTools(server: McpServer, bot: Telegraf, options: ToolOptions = {}) {
   registerBotTools(server, bot);
   registerMessageTools(server, bot);
-  registerMediaTools(server, bot);
+  registerMediaTools(server, bot, options);
   registerInteractiveTools(server, bot);
   registerChatTools(server, bot);
   registerMemberTools(server, bot);

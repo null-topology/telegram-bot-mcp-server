@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Telegraf } from "telegraf";
 import { z } from "zod";
+import { downloadFile } from "../downloads";
 import { handleToolError, jsonResult } from "../utils";
 import { toolMetadata, userIdSchema } from "./common";
 
@@ -26,5 +27,14 @@ export function registerFileTools(server: McpServer, bot: Telegraf) {
     try {
       return jsonResult(await bot.telegram.getFile(fileId));
     } catch (error) { return handleToolError(error, "get-file", `Getting file info for ${fileId}`); }
+  });
+
+  server.registerTool("download-file", {
+    ...toolMetadata("download-file"),
+    description: "Download a file (by file_id) into TELEGRAM_DOWNLOAD_DIR on the server host. Bots can download files of up to 20 MB in size. Returns JSON with the saved path, size, MIME type and file identifiers; the download URL is never returned.",
+    inputSchema: { fileId: z.string().describe("Identifier of the file to download") },
+  }, async ({ fileId }) => {
+    try { return jsonResult(await downloadFile(bot, fileId)); }
+    catch (error) { return handleToolError(error, "download-file", `Downloading file ${fileId}`); }
   });
 }

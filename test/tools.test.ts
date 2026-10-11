@@ -10,13 +10,13 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const readOnly = ["get-me", "get-chat", "get-chat-member-count", "get-chat-member", "get-my-short-description", "get-my-commands", "get-my-name", "get-my-description", "get-chat-administrators", "get-user-profile-photos", "get-file"];
 const destructive = ["delete-message", "kick-chat-member", "un-ban-chat-member", "restrict-chat-member", "promote-chat-member", "leave-chat", "revoke-chat-invite-link", "export-chat-invite-link", "unpin-all-chat-messages"];
-const names = ["get-me", "send-message", "send-photo", "kick-chat-member", "un-ban-chat-member", "get-chat", "get-chat-member-count", "get-chat-member", "set-my-short-description", "get-my-short-description", "set-my-commands", "get-my-commands", "set-my-name", "get-my-name", "set-my-description", "get-my-description", "send-document", "send-video", "send-audio", "send-voice", "send-animation", "send-sticker", "send-poll", "send-dice", "send-location", "send-contact", "send-chat-action", "forward-message", "copy-message", "edit-message-text", "delete-message", "pin-chat-message", "unpin-chat-message", "unpin-all-chat-messages", "set-chat-title", "set-chat-description", "get-chat-administrators", "restrict-chat-member", "promote-chat-member", "create-chat-invite-link", "revoke-chat-invite-link", "export-chat-invite-link", "leave-chat", "get-user-profile-photos", "get-file"];
+const names = ["get-me", "send-message", "send-photo", "kick-chat-member", "un-ban-chat-member", "get-chat", "get-chat-member-count", "get-chat-member", "set-my-short-description", "get-my-short-description", "set-my-commands", "get-my-commands", "set-my-name", "get-my-name", "set-my-description", "get-my-description", "send-document", "send-video", "send-audio", "send-voice", "send-animation", "send-sticker", "send-poll", "send-dice", "send-location", "send-contact", "send-chat-action", "forward-message", "copy-message", "edit-message-text", "delete-message", "pin-chat-message", "unpin-chat-message", "unpin-all-chat-messages", "set-chat-title", "set-chat-description", "get-chat-administrators", "restrict-chat-member", "promote-chat-member", "create-chat-invite-link", "revoke-chat-invite-link", "export-chat-invite-link", "leave-chat", "get-user-profile-photos", "get-file", "send-video-note", "send-media-group", "edit-message-caption", "set-message-reaction", "download-file"];
 const common = { replyToMessageId: 7, messageThreadId: 9, disableNotification: true, protectContent: true };
 const extra = { reply_parameters: { message_id: 7, allow_sending_without_reply: true }, message_thread_id: 9, disable_notification: true, protect_content: true };
 const file = { file_id: "file", file_unique_id: "unique" };
@@ -189,6 +189,17 @@ it("omits the delivery summary when the first text part fails", async () => {
   expect(text(result)).not.toContain("media was delivered");
 });
 
+it("prints error_code only for errors that carry a code", async () => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  const local = await call("send-document", { chatId: "123", media: "./a.pdf" });
+  expect(local.isError).toBe(true);
+  expect(text(local)).toContain("description: Local paths must be absolute");
+  expect(text(local)).not.toContain("error_code");
+  api.sendMessage.mockRejectedValue({ response: { error_code: 400, description: "Mock failure" } });
+  const remote = await call("send-message", { chatId: "123", text: "Hello" });
+  expect(text(remote)).toContain("error_code: 400\ndescription: Mock failure");
+});
+
 it.each([0, 1])("reports media and delivered identifiers when caption overflow fails after %i text parts", async (delivered) => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   api.sendMessage.mockRejectedValue({ response: { error_code: 400, description: "Mock failure" } });
@@ -285,7 +296,7 @@ it("keeps every stdio stdout line valid JSON-RPC during initialization", async (
 }, 10000);
 
 describe("tool registration", () => {
-  it("pins all 45 tool names, descriptions and input keys", async () => {
+  it("pins all 50 tool names, descriptions and input keys", async () => {
     const { tools } = await client.listTools();
     const contract = tools.sort((a, b) => a.name.localeCompare(b.name)).map(tool => JSON.stringify({
       name: tool.name,
@@ -296,10 +307,10 @@ describe("tool registration", () => {
     expect(existsSync(snapshot)).toBe(true);
     await expect(contract).toMatchFileSnapshot(snapshot);
   });
-  it("registers exactly 45 tools with explicit annotations", async () => {
+  it("registers exactly 50 tools with explicit annotations", async () => {
     const { tools } = await client.listTools();
     expect(tools.map(tool => tool.name).sort()).toEqual([...names].sort());
-    expect(tools).toHaveLength(45);
+    expect(tools).toHaveLength(50);
     for (const tool of tools) {
       expect(tool.title).toEqual(expect.any(String));
       expect(tool.annotations).toMatchObject({ readOnlyHint: readOnly.includes(tool.name), destructiveHint: destructive.includes(tool.name), openWorldHint: true });
@@ -394,18 +405,33 @@ const methods: Record<string, string> = {
   "kick-chat-member": "banChatMember",
   "un-ban-chat-member": "unbanChatMember",
   "get-chat-member-count": "getChatMembersCount",
+  // download-file calls getFile through callApi so its deadline can abort the request.
+  "download-file": "callApi",
+};
+const failureArgs: Record<string, Record<string, unknown>> = {
+  "send-media-group": { media: [{ type: "photo", media: "file" }, { type: "video", media: "file" }] },
 };
 it.each(names)("%s reports API failures rather than success", async (name) => {
   vi.spyOn(console, "error").mockImplementation(() => {});
   const method = methods[name] ?? name.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
   api[method] = vi.fn().mockRejectedValue({ response: { error_code: 429, description: "Rate limited", parameters: { retry_after: 12 } } });
-  const result = await call(name, {
-    chatId: "123", userId: 1, text: "Text", media: "file", fromChatId: "456", messageId: 4,
-    short_description: "Short", commands: [{ command: "start", description: "Start" }],
-    name: "Name", description: "Description", title: "Title", inviteLink: "https://example.com/invite",
-    fileId: "file", action: "typing", question: "Question?", options: ["A", "B"],
-    latitude: 1, longitude: 2, phoneNumber: "123", firstName: "Test",
-  });
+  // download-file refuses before calling Telegram unless a download directory is configured.
+  const downloads = mkdtempSync(join(tmpdir(), "telegram-failure-test-"));
+  vi.stubEnv("TELEGRAM_DOWNLOAD_DIR", downloads);
+  let result;
+  try {
+    result = await call(name, {
+      chatId: "123", userId: 1, text: "Text", media: "file", fromChatId: "456", messageId: 4,
+      short_description: "Short", commands: [{ command: "start", description: "Start" }],
+      name: "Name", description: "Description", title: "Title", inviteLink: "https://example.com/invite",
+      fileId: "file", action: "typing", question: "Question?", options: ["A", "B"],
+      latitude: 1, longitude: 2, phoneNumber: "123", firstName: "Test",
+      videoNote: "file", caption: "Caption", ...failureArgs[name],
+    });
+  } finally {
+    vi.unstubAllEnvs();
+    rmSync(downloads, { recursive: true, force: true });
+  }
   expect(api[method]).toHaveBeenCalled();
   expect(result.isError).toBe(true);
   expect((result.content as { text: string }[])[0].text).toContain("description: Rate limited");
@@ -441,7 +467,7 @@ it("builds the shared server with package metadata", async () => {
     expect(Object.keys(sharedClient.getServerCapabilities() ?? {})).toEqual(["tools"]);
     expect(sharedClient.getServerCapabilities()).not.toHaveProperty("resources");
     expect(packageInfo.name).toBe("@null-topology/telegram-bot-mcp-server");
-    expect((await sharedClient.listTools()).tools).toHaveLength(45);
+    expect((await sharedClient.listTools()).tools).toHaveLength(50);
   } finally {
     await sharedClient.close();
     await sharedServer.close();

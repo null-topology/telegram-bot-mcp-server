@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { delimiter } from "node:path";
 import { packageInfo, startServer } from "./server";
 
 // CLI argument parsing
@@ -29,6 +30,23 @@ OPTIONS:
 ENVIRONMENT VARIABLES:
   TELEGRAM_BOT_API_TOKEN  Your Telegram bot token (required)
                          Get one from @BotFather on Telegram
+  TELEGRAM_UPLOAD_ROOTS   Directories (separated by "${delimiter}") that local media
+                         uploads are restricted to when it lists at least one
+                         directory; unset, empty, or only separators allows
+                         any local file the server can read
+                         Example: /srv/telegram/outbox
+  TELEGRAM_DOWNLOAD_DIR   Directory where download-file saves files (created if
+                         missing); unset disables download-file
+                         Example: /srv/telegram/inbox
+
+MEDIA INPUTS:
+  Media tools accept three forms of input:
+    - a Telegram file_id of a file already on Telegram's servers
+    - an http(s) URL that Telegram downloads itself
+    - a local file path, which must be absolute; when TELEGRAM_UPLOAD_ROOTS
+      lists at least one directory, it must also be inside one of them (both
+      the path as given and the file it resolves to)
+  Video notes are the exception: they take a file_id or a local path, not a URL.
 
 EXAMPLES:
   # Run with environment variable
@@ -62,6 +80,10 @@ FEATURES:
 - Get chat, member, and file information
 - Configure bot settings (name, description, commands)
 - Comprehensive error handling with detailed feedback
+- Upload local files, optionally restricted to TELEGRAM_UPLOAD_ROOTS (10 MB photos, 50 MB other media)
+- Send video notes and media groups (albums), edit captions, and set reactions
+- Convert local voice audio to OGG/Opus with ffmpeg (optional dependency)
+- Download files of up to 20 MB into TELEGRAM_DOWNLOAD_DIR
 
 For more information, visit: https://github.com/siavashdelkhosh81/telegram-bot-mcp-server
 `);

@@ -1,9 +1,15 @@
 import { inspect } from "node:util";
-import { Telegraf } from "telegraf";
-import type { Message, Convenience } from "telegraf/types";
+import { Telegraf, type Telegram } from "telegraf";
+import { multipartOptions } from "./tools/common";
+import type { InputFile, Message, Convenience } from "telegraf/types";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 export const TELEGRAM_CAPTION_LIMIT = 1024;
+
+/** Caption length as counted for TELEGRAM_CAPTION_LIMIT checks: UTF-16 code units. */
+export function captionLength(caption: string): number {
+  return caption.length;
+}
 
 // Telegram's message length limit
 export const TELEGRAM_MESSAGE_LIMIT = 4096;
@@ -195,15 +201,22 @@ export async function sendWithLongCaption<T extends { message_id: number }>(
   }
 }
 
+/**
+ * Sends a photo through telegram (bot.telegram unless an upload batch view is given). With uploading
+ * set, the photo request carries multipart-safe options; caption overflow keeps the originals.
+ */
 export async function sendPhotoWithLongCaption(
   bot: Telegraf,
   chatId: string,
-  media: string,
+  media: string | InputFile,
   caption?: string,
-  options: Convenience.ExtraPhoto = {}
+  options: Convenience.ExtraPhoto = {},
+  telegram: Telegram = bot.telegram,
+  uploading = false
 ): Promise<Message[]> {
+  const extra = multipartOptions(options, uploading);
   return sendWithLongCaption(bot, chatId,
-    first => bot.telegram.sendPhoto(chatId, media, { ...options, caption: first }),
+    first => telegram.sendPhoto(chatId, media, { ...extra, caption: first }),
     caption, options);
 }
 
@@ -228,19 +241,36 @@ export function messageResult(messages: Message[]): CallToolResult {
     date: first.date,
     ...("dice" in first ? { dice: { emoji: first.dice.emoji, value: first.dice.value } } : {}),
   };
+  return jsonResult({ ...result, ...messageFile(first) });
+}
+
+/** File identifiers of a message's media; photos report their largest size. */
+export function messageFile(message: Message): { file_id: string; file_unique_id: string } | undefined {
   let file;
-  if ("photo" in first) {
-    file = first.photo.reduce((largest, photo) =>
+  if ("photo" in message) {
+    file = message.photo.reduce((largest, photo) =>
       photo.width * photo.height > largest.width * largest.height ? photo : largest);
-  } else if ("animation" in first) file = first.animation;
-  else if ("document" in first) file = first.document;
-  else if ("video" in first) file = first.video;
-  else if ("audio" in first) file = first.audio;
-  else if ("voice" in first) file = first.voice;
-  else if ("sticker" in first) file = first.sticker;
-  return jsonResult(file
-    ? { ...result, file_id: file.file_id, file_unique_id: file.file_unique_id }
-    : result);
+  } else if ("animation" in message) file = message.animation;
+  else if ("document" in message) file = message.document;
+  else if ("video" in message) file = message.video;
+  else if ("audio" in message) file = message.audio;
+  else if ("voice" in message) file = message.voice;
+  else if ("video_note" in message) file = message.video_note;
+  else if ("sticker" in message) file = message.sticker;
+  return file && { file_id: file.file_id, file_unique_id: file.file_unique_id };
+}
+
+/** Summarizes an album: every message id plus each item's file identifiers. */
+export function mediaGroupResult(messages: Message[]): CallToolResult {
+  if (!messages.length) return messageResult(messages);
+  const [first] = messages;
+  return jsonResult({
+    chat_id: first.chat.id,
+    message_id: first.message_id,
+    message_ids: messages.map(message => message.message_id),
+    date: first.date,
+    items: messages.map(message => ({ message_id: message.message_id, ...messageFile(message) })),
+  });
 }
 
 /**
@@ -297,7 +327,11 @@ export function formatErrorForMCP(error: TelegramError): string {
     errorMessage = `Error ${error.code}: ${error.description}`;
   }
 
-  errorMessage += `\nerror_code: ${error.code ?? 'unknown'}\ndescription: ${error.description}`;
+  // Local failures have no code; only Telegram and network errors report one.
+  if (error.code !== undefined && error.code !== null) {
+    errorMessage += `\nerror_code: ${error.code}`;
+  }
+  errorMessage += `\ndescription: ${error.description}`;
   if (error.retryAfter !== undefined) {
     errorMessage += `\nretry_after: ${error.retryAfter}`;
   }
