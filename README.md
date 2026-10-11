@@ -2,9 +2,18 @@
 
 A powerful **Model Context Protocol (MCP) server** for seamless Telegram Bot API integration with intelligent message splitting, comprehensive error handling, and NPX support.
 
-[![NPM Version](https://img.shields.io/npm/v/telegram-bot-mcp-server)](https://www.npmjs.com/package/telegram-bot-mcp-server)
+[![NPM Version](https://img.shields.io/npm/v/@null-topology/telegram-bot-mcp-server)](https://www.npmjs.com/package/@null-topology/telegram-bot-mcp-server)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen)](https://nodejs.org/)
+
+## What's new in 2.0.0
+
+- Package renamed to `@null-topology/telegram-bot-mcp-server`; the executable remains `telegram-bot-mcp-server`.
+- Send and edit tools return JSON message identifiers; media sends also return file identifiers.
+- Failed calls return `isError: true`, with Telegram error details and `retry_after` on rate limits.
+- Common send options support replies, forum threads, formatting, silent delivery, content protection, and link previews.
+- Media captions use the 1024-character limit; overflow continues as text. Split text reserves room for part indicators within 4096 characters.
+- All 45 tools include titles and read-only, destructive, and open-world annotations.
 
 ## ✨ Key Features
 
@@ -15,7 +24,7 @@ A powerful **Model Context Protocol (MCP) server** for seamless Telegram Bot API
 - **✏️ Message Lifecycle**: Edit, delete, forward, copy, and pin messages
 - **👮 Group Administration**: Ban/unban, restrict/mute, promote admins, and manage invite links
 - **🛡️ Comprehensive Error Handling**: Detailed error reporting with context, error codes, and debugging information
-- **📦 NPX Support**: Run directly with `npx telegram-bot-mcp-server` - no installation required
+- **📦 NPX Support**: Run directly with `npx @null-topology/telegram-bot-mcp-server` - no installation required
 - **🔧 Easy Integration**: Simple MCP client configuration for AI assistants
 
 ## 🚀 Quick Start
@@ -23,21 +32,21 @@ A powerful **Model Context Protocol (MCP) server** for seamless Telegram Bot API
 ### Option 1: NPX (Recommended)
 ```bash
 # Run directly without installation
-npx telegram-bot-mcp-server
+npx @null-topology/telegram-bot-mcp-server
 ```
 
 ### Option 2: NPM Installation
 ```bash
 # Install globally
-npm install -g telegram-bot-mcp-server
+npm install -g @null-topology/telegram-bot-mcp-server
 
 # Or install locally
-npm install telegram-bot-mcp-server
+npm install @null-topology/telegram-bot-mcp-server
 ```
 
 ## 📋 Prerequisites
 
-1. **Node.js 18+**: [Download here](https://nodejs.org/)
+1. **Node.js 20+**: [Download here](https://nodejs.org/)
 2. **Telegram Bot Token**: Get one from [@BotFather](https://t.me/BotFather)
 
 ### Getting Your Bot Token
@@ -56,7 +65,7 @@ Add this configuration to your MCP client (Claude Desktop, etc.):
   "mcpServers": {
     "telegram_bot": {
       "command": "npx",
-      "args": ["telegram-bot-mcp-server"],
+      "args": ["@null-topology/telegram-bot-mcp-server"],
       "env": {
         "TELEGRAM_BOT_API_TOKEN": "your_bot_token_here"
       }
@@ -120,7 +129,7 @@ Add this configuration to your MCP client (Claude Desktop, etc.):
 | `send-voice` | Send a playable voice message (.OGG/OPUS, .MP3, .M4A) | `chatId`, `media`, `caption?` |
 | `send-animation` | Send an animation (GIF or soundless MPEG4) | `chatId`, `media`, `caption?` |
 | `send-sticker` | Send a static, animated, or video sticker | `chatId`, `media` |
-| `get-file` | Get file info and a direct HTTPS download link for any file_id | `fileId` |
+| `get-file` | Get file info for any file_id (no download link) | `fileId` |
 
 For all media tools, `media` accepts a Telegram `file_id` (recommended) or an HTTP URL.
 
@@ -176,11 +185,61 @@ For all media tools, `media` accepts a Telegram `file_id` (recommended) or an HT
 | `set-my-short-description` / `get-my-short-description` | Configure and retrieve the bot's short description (profile page) | `short_description` (0-120 chars) |
 | `set-my-commands` / `get-my-commands` | Configure and retrieve the bot's command menu | `commands` array of `{ command, description }` |
 
+### Common send options
+
+All options below are optional. `replyToMessageId`, `messageThreadId`,
+`disableNotification`, and `protectContent` apply to `send-message`, `send-photo`,
+`send-document`, `send-video`, `send-audio`, `send-voice`, `send-animation`,
+`send-sticker`, `send-poll`, `send-dice`, `send-location`, `send-contact`, and
+`copy-message`. `forward-message` supports the same options except replies;
+`send-chat-action` supports `messageThreadId` only.
+
+| Option | Behavior |
+|--------|----------|
+| `replyToMessageId` | Sets `reply_parameters.message_id` with `allow_sending_without_reply: true` |
+| `messageThreadId` | Sets the target forum topic through `message_thread_id` |
+| `disableNotification` | Sets `disable_notification` for silent delivery |
+| `protectContent` | Sets `protect_content` to prevent forwarding and saving |
+| `parseMode` | `HTML`, `MarkdownV2`, or `none`; `none` omits the Telegram formatting option |
+| `disableLinkPreview` | When true, sets `link_preview_options.is_disabled` on `send-message` and `edit-message-text` |
+
+`parseMode` formats text on `send-message` and `edit-message-text`, and captions
+on `send-photo`, `send-document`, `send-video`, `send-audio`, `send-voice`,
+`send-animation`, and `copy-message`. `send-photo` keeps its `text` caption input;
+`copy-message` accepts an optional replacement `caption`. Captions beyond 1024
+characters continue as text messages. Every split or overflow part retains the
+send and formatting options, with a 100 ms delay between parts. Long text and
+captions are split without regard to HTML/MarkdownV2 markup, so a tag or entity
+that spans a split point can be rejected by Telegram.
+
+### JSON answers
+
+Send and edit results contain `chat_id`, `message_id`, `message_ids`, and `date`.
+`message_ids` includes every split or caption-overflow message in delivery order.
+Media results add `file_id` and `file_unique_id` (the largest photo size for photos).
+`send-dice` results also include `dice: { emoji, value }` with the rolled value.
+`copy-message` uses the input chat identifier and `date: null`; an edit returning
+only a boolean produces `{ "chat_id": "...", "message_id": 123, "edited": true }`.
+`get-me` returns the full bot information object. Failed tools return `isError: true`
+instead of a success result.
+
+### Development checks
+
+```bash
+yarn build
+yarn test
+```
+
+Tests require Node.js 22.12+ and use mocked Telegram calls and the in-memory MCP
+transport; no token or network access is needed. CLI help and version output go
+to stdout and exit before the transport starts. Diagnostics go to stderr so
+stdout remains reserved for the stdio protocol while the server is running.
+
 ## 🆕 New Features
 
 ### Rich Media Support
 - **Documents, Video, Audio, Voice, Animations, Stickers**: Send any kind of media by `file_id` or URL
-- **File Downloads**: Resolve any `file_id` to a direct HTTPS download link with `get-file`
+- **File Info**: Look up file metadata for any `file_id` with `get-file`
 
 ### Interactive Content
 - **Polls & Quizzes**: Native polls with anonymous mode, multiple answers, and quiz mode with a correct answer
@@ -210,7 +269,7 @@ For all media tools, `media` accepts a Telegram `file_id` (recommended) or an HT
 - **Debug Information**: Comprehensive logging for troubleshooting
 
 ### NPX Support
-- **Zero Installation**: Run directly with `npx telegram-bot-mcp-server`
+- **Zero Installation**: Run directly with `npx @null-topology/telegram-bot-mcp-server`
 - **CLI Interface**: Built-in help and version commands
 - **Environment Validation**: Checks for required bot token
 - **Cross-Platform**: Works on Windows, macOS, and Linux
@@ -226,29 +285,29 @@ For all media tools, `media` accepts a Telegram `file_id` (recommended) or an HT
 **Solution**: Set the `TELEGRAM_BOT_API_TOKEN` environment variable:
 ```bash
 export TELEGRAM_BOT_API_TOKEN="your_token_here"
-npx telegram-bot-mcp-server
+npx @null-topology/telegram-bot-mcp-server
 ```
 
 #### "Something went wrong" Errors (Legacy)
 This has been replaced with detailed error messages. Update to the latest version for better error reporting.
 
 #### NPX Command Not Found
-**Solution**: Ensure Node.js 18+ is installed:
+**Solution**: Ensure Node.js 20+ is installed:
 ```bash
-node --version  # Should be 18.0.0 or higher
+node --version  # Should be 20.0.0 or higher
 npm --version   # Should be included with Node.js
 ```
 
 #### Permission Errors
 **Solution**: On Unix systems, you may need to use `sudo` for global installation:
 ```bash
-sudo npm install -g telegram-bot-mcp-server
+sudo npm install -g @null-topology/telegram-bot-mcp-server
 ```
 
 ### Debug Mode
 Set `NODE_ENV=development` for additional debug information:
 ```bash
-NODE_ENV=development npx telegram-bot-mcp-server
+NODE_ENV=development npx @null-topology/telegram-bot-mcp-server
 ```
 
 ## 📚 Usage Examples
